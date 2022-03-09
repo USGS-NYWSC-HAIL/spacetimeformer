@@ -3,9 +3,10 @@ import random
 import sys
 import warnings
 import os
-
+import pickle
 import pytorch_lightning as pl
 import torch
+import pickle
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -65,7 +66,6 @@ def create_parser():
 
     stf.callbacks.TimeMaskedLossCallback.add_cli(parser)
 
-    parser.add_argument("--null_value", type=float, default=None)
     parser.add_argument("--early_stopping", action="store_true")
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--plot", action="store_true")
@@ -208,7 +208,6 @@ def create_model(config):
             linear_window=config.linear_window,
             class_loss_imp=config.class_loss_imp,
             time_emb_dim=config.time_emb_dim,
-            null_value=config.null_value,
         )
     elif config.model == "linear":
         forecaster = stf.linear_model.Linear_Forecaster(
@@ -224,7 +223,6 @@ def create_model(config):
 
 def create_dset(config):
     INV_SCALER = lambda x: x
-    SCALER = lambda x: x
     NULL_VAL = None
 
     if config.dset == "metr-la" or config.dset == "pems-bay":
@@ -240,7 +238,6 @@ def create_dset(config):
             workers=config.workers,
         )
         INV_SCALER = data.inverse_scale
-        SCALER = data.scale
         NULL_VAL = 0.0
 
     elif config.dset == "precip":
@@ -304,18 +301,16 @@ def create_dset(config):
             workers=config.workers,
         )
         INV_SCALER = dset.reverse_scaling
-        SCALER = dset.apply_scaling
         NULL_VAL = None
 
-    return DATA_MODULE, INV_SCALER, SCALER, NULL_VAL
+    return DATA_MODULE, INV_SCALER, NULL_VAL
 
 
 def create_callbacks(config):
     saving = pl.callbacks.ModelCheckpoint(
         dirpath=f"./data/stf_model_checkpoints/{config.run_name}_{''.join([str(random.randint(0,9)) for _ in range(9)])}",
         monitor="val/mse",
-        mode="min",
-        filename=f"{config.run_name}" + "{epoch:02d}-{val/mse:.2f}",
+        filename=f"{config.run_name}" + "{epoch:02d}-{val/loss:.2f}",
         save_top_k=1,
     )
     callbacks = [saving]
@@ -324,7 +319,7 @@ def create_callbacks(config):
         callbacks.append(
             pl.callbacks.early_stopping.EarlyStopping(
                 monitor="val/loss",
-                patience=5,
+                patience=3,
             )
         )
     if config.wandb:
@@ -377,56 +372,73 @@ def main(args):
         config = wandb.config
         wandb.run.name = args.run_name
         wandb.run.save()
-        logger = pl.loggers.WandbLogger(
-            experiment=experiment, save_dir="./data/stf_LOG_DIR"
-        )
-        logger.log_hyperparams(config)
+    else:
+        config = args
 
-    # Dset
-    data_module, inv_scaler, scaler, null_val = create_dset(args)
 
     # Model
-    args.null_value = null_val
-    forecaster = create_model(args)
+    forecaster = create_model(config)
+
+    # Dset
+    data_module, inv_scaler, null_val = create_dset(config)
+
+    with open('./data_module_{0}.pkl'.format(args.run_name), 'wb') as file:
+        pickle.dump(data_module, file)
+
     forecaster.set_inv_scaler(inv_scaler)
-    forecaster.set_scaler(scaler)
-    forecaster.set_null_value(null_val)
 
     # Callbacks
-    callbacks = create_callbacks(args)
+    callbacks = create_callbacks(config)
     test_samples = next(iter(data_module.test_dataloader()))
 
-    if args.wandb and args.plot:
+    # with open('./config_{0}.pkl'.format(args.run_name), 'wb') as file:
+    #     pickle.dump(config, file)
+
+    if config.wandb and config.plot:
         callbacks.append(
             stf.plot.PredictionPlotterCallback(
-                test_samples, total_samples=min(8, args.batch_size)
+                test_samples, total_samples=min(8, config.batch_size)
             )
         )
-    if args.wandb and args.model == "spacetimeformer" and args.attn_plot:
+    if config.wandb and config.model == "spacetimeformer" and config.attn_plot:
 
         callbacks.append(
             stf.plot.AttentionMatrixCallback(
                 test_samples,
                 layer=0,
-                total_samples=min(16, args.batch_size),
+                total_samples=min(16, config.batch_size),
                 raw_data_dir=wandb.run.dir,
             )
         )
 
+    # Deal with missing entries in some datasets
+    if null_val is not None:
+        forecaster.set_null_value(null_val)
+
+    # Logging
+    if config.wandb:
+        logger = pl.loggers.WandbLogger(
+            experiment=experiment, save_dir="./data/stf_LOG_DIR"
+        )
+        logger.log_hyperparams(config)
+
     trainer = pl.Trainer(
-        gpus=args.gpus,
+        gpus=config.gpus,
         callbacks=callbacks,
         logger=logger if args.wandb else None,
         accelerator="dp",
         log_gpu_memory=True,
-        gradient_clip_val=args.grad_clip_norm,
+        gradient_clip_val=config.grad_clip_norm,
         gradient_clip_algorithm="norm",
-        overfit_batches=20 if args.debug else 0,
+        overfit_batches=20 if config.debug else 0,
         # track_grad_norm=2,
         accumulate_grad_batches=args.accumulate,
         sync_batchnorm=True,
         val_check_interval=0.25 if args.dset == "asos" else 1.0,
     )
+
+    with open('./trainer_{0}.pkl'.format(args.run_name), 'wb') as file:
+        pickle.dump(trainer, file)
 
     # Train
     trainer.fit(forecaster, datamodule=data_module)
@@ -440,8 +452,11 @@ def main(args):
 
 if __name__ == "__main__":
     # CLI
-    parser = create_parser()
-    args = parser.parse_args()
+    # parser = create_parser()
+    # args = parser.parse_args()
+
+    with open('./config_spatiotemporal_toy2.pkl', 'rb') as file:
+        args = pickle.load(file)
 
     for trial in range(args.trials):
         main(args)

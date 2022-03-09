@@ -54,10 +54,10 @@ class Spacetimeformer(nn.Module):
         initial_downsample_convs: int = 0,
         intermediate_downsample_convs: int = 0,
         device=torch.device("cuda:0"),
-        null_value: float = None,
         verbose: bool = True,
     ):
         super().__init__()
+
         if e_layers:
             assert intermediate_downsample_convs <= e_layers - 1
         if embed_method == "temporal":
@@ -80,7 +80,6 @@ class Spacetimeformer(nn.Module):
             downsample_convs=initial_downsample_convs,
             method=embed_method,
             start_token_len=start_token_len,
-            null_value=null_value,
         )
 
         # Select Attention Mechanisms

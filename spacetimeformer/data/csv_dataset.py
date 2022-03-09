@@ -64,10 +64,12 @@ class CSVTimeSeries:
         train_mask = df["Datetime"] > pd.Timestamp.min
         val_mask = df["Datetime"] > pd.Timestamp.max
         test_mask = df["Datetime"] > pd.Timestamp.max
+        # predict_mask = df["Datetime"] > pd.Timestamp.max
         train_mask = mask_intervals(train_mask, test_intervals, False)
         train_mask = mask_intervals(train_mask, val_intervals, False)
         val_mask = mask_intervals(val_mask, val_intervals, True)
         test_mask = mask_intervals(test_mask, test_intervals, True)
+        # predict_mask = mask_intervals(predict_mask, test_intervals, True)
 
         if (train_mask == False).all():
             print(f"No training data detected for file {data_path}")
@@ -78,38 +80,37 @@ class CSVTimeSeries:
 
         self._scaler = self._scaler.fit(self._train_data[target_cols].values)
 
-        self._train_data = self.apply_scaling_df(df[train_mask])
-        self._val_data = self.apply_scaling_df(df[val_mask])
-        self._test_data = self.apply_scaling_df(df[test_mask])
+        self._train_data = self.apply_scaling(df[train_mask])
+        self._val_data = self.apply_scaling(df[val_mask])
+        self._test_data = self.apply_scaling(df[test_mask])
+        # self._predict_data = self.apply_scaling(df[predict_mask])
 
     def get_slice(self, split, start, stop, skip):
-        assert split in ["train", "val", "test"]
+        assert split in ["train", "val", "test", "predict"]
         if split == "train":
             return self.train_data.iloc[start:stop:skip]
         elif split == "val":
             return self.val_data.iloc[start:stop:skip]
         else:
             return self.test_data.iloc[start:stop:skip]
+        # else:
+        #     return self.predict_data.iloc[start:stop:skip]
 
-    def apply_scaling_df(self, df):
+    def apply_scaling(self, df):
         scaled = df.copy(deep=True)
-        scaled[self.target_cols] = (
-            df[self.target_cols].values - self._scaler.mean_
-        ) / self._scaler.scale_
+        #scaled[self.target_cols] = self._scaler.transform(df[self.target_cols].values)
+        scaled[self.target_cols] = (df[self.target_cols].values - self._scaler.mean_) / self._scaler.scale_
         return scaled
-
-    def apply_scaling(self, array):
-        return (array - self._scaler.mean_) / self._scaler.scale_
 
     def reverse_scaling_df(self, df):
         scaled = df.copy(deep=True)
-        scaled[self.target_cols] = (
-            df[self.target_cols] * self._scaler.scale_
-        ) + self._scaler.mean_
+        #scaled[self.target_cols] = self._scaler.inverse_transform(df[self.target_cols].values)
+        scaled[self.target_cols] = (df[self.target_cols] * self._scaler.scale_) + self._scaler.mean_
         return scaled
 
     def reverse_scaling(self, array):
         return (array * self._scaler.scale_) + self._scaler.mean_
+        #return self._scaler.inverse_transform(array)
 
     @property
     def train_data(self):
@@ -123,11 +124,16 @@ class CSVTimeSeries:
     def test_data(self):
         return self._test_data
 
+    # @property
+    # def predict_data(self):
+    #     return self._predict_data
+
     def length(self, split):
         return {
             "train": len(self.train_data),
             "val": len(self.val_data),
             "test": len(self.test_data),
+            # "predict": len(self.predict_data),
         }[split]
 
     @classmethod
@@ -144,7 +150,7 @@ class CSVTorchDset(Dataset):
         target_points: int = 32,
         time_resolution: int = 1,
     ):
-        assert split in ["train", "val", "test"]
+        assert split in ["train", "val", "test", "predict"]
         self.split = split
         self.series = csv_time_series
         self.context_points = context_points
@@ -156,8 +162,7 @@ class CSVTorchDset(Dataset):
             for i in range(
                 0,
                 self.series.length(split)
-                + time_resolution * (-target_points - context_points)
-                + 1,
+                + time_resolution * (-target_points - context_points),
             )
         ]
         random.shuffle(self._slice_start_points)

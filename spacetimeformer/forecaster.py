@@ -5,7 +5,6 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.distributions import Normal
-import numpy as np
 
 import spacetimeformer as stf
 
@@ -19,8 +18,8 @@ class Forecaster(pl.LightningModule, ABC):
         linear_window: int = 0,
     ):
         super().__init__()
+        self.save_hyperparameters()
         self._inv_scaler = lambda x: x
-        self._scaler = lambda x: x
         self.l2_coeff = l2_coeff
         self.learning_rate = learning_rate
         self.time_masked_idx = None
@@ -36,9 +35,6 @@ class Forecaster(pl.LightningModule, ABC):
 
     def set_inv_scaler(self, scaler) -> None:
         self._inv_scaler = scaler
-
-    def set_scaler(self, scaler) -> None:
-        self._scaler = scaler
 
     @property
     @abstractmethod
@@ -99,47 +95,6 @@ class Forecaster(pl.LightningModule, ABC):
         )
         return loss, outputs, mask
 
-    def predict(
-        self,
-        x_c: torch.Tensor,
-        y_c: torch.Tensor,
-        x_t: torch.Tensor,
-        sample_preds: bool = False,
-    ) -> torch.Tensor:
-        og_device = y_c.device
-        # move to model device
-        x_c = x_c.to(self.device).float()
-        x_t = x_t.to(self.device).float()
-        # move y_c to cpu if it isn't already there, scale, and then move back to the model device
-        y_c = torch.from_numpy(self._scaler(y_c.cpu().numpy())).to(self.device).float()
-        # create dummy y_t of zeros
-        y_t = (
-            torch.zeros((x_t.shape[0], x_t.shape[1], y_c.shape[2]))
-            .to(self.device)
-            .float()
-        )
-
-        with torch.no_grad():
-            # gradient-free prediction
-            normalized_preds, *_ = self.forward(
-                x_c, y_c, x_t, y_t, **self.eval_step_forward_kwargs
-            )
-
-        # handle case that the output is a distribution (spacetimeformer)
-        if isinstance(normalized_preds, Normal):
-            if sample_preds:
-                normalized_preds = normalized_preds.sample()
-            else:
-                normalized_preds = normalized_preds.mean
-
-        # preds --> cpu --> inverse scale to original units --> original device of y_c
-        preds = (
-            torch.from_numpy(self._inv_scaler(normalized_preds.cpu().numpy()))
-            .to(og_device)
-            .float()
-        )
-        return preds
-
     @abstractmethod
     def forward_model_pass(
         self,
@@ -178,6 +133,7 @@ class Forecaster(pl.LightningModule, ABC):
             "mae": stf.eval_stats.mae(true, pred),
             "mse": stf.eval_stats.mse(true, pred),
             "rse": stf.eval_stats.rrse(true, pred),
+            "nscliffe": stf.eval_stats.nash_sutcliffe(true, pred)
         }
 
     def step(self, batch: Tuple[torch.Tensor], train: bool = False):
@@ -207,10 +163,7 @@ class Forecaster(pl.LightningModule, ABC):
 
     def _log_stats(self, section, outs):
         for key in outs.keys():
-            stat = outs[key]
-            if isinstance(stat, np.ndarray) or isinstance(stat, torch.Tensor):
-                stat = stat.mean()
-            self.log(f"{section}/{key}", stat, sync_dist=True)
+            self.log(f"{section}/{key}", outs[key], sync_dist=True)
 
     def training_step_end(self, outs):
         self._log_stats("train", outs)
@@ -218,11 +171,11 @@ class Forecaster(pl.LightningModule, ABC):
 
     def validation_step_end(self, outs):
         self._log_stats("val", outs)
-        return {"loss": outs["loss"].mean()}
+        return {"loss": outs["loss"]}
 
     def test_step_end(self, outs):
         self._log_stats("test", outs)
-        return {"loss": outs["loss"].mean()}
+        return {"loss": outs["loss"]}
 
     def predict_step(self, batch, batch_idx):
         return self(*batch, **self.eval_step_forward_kwargs)

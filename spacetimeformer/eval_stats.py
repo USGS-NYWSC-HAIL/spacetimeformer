@@ -195,6 +195,10 @@ def mase(actual: np.ndarray, predicted: np.ndarray, seasonality: int = 1):
     )
 
 
+def nash_sutcliffe(actual: np.ndarray, predicted: np.ndarray):
+    return 1 - (np.sum((predicted - actual)**2) / np.sum((actual - np.mean(actual))**2))
+
+
 def std_ae(actual: np.ndarray, predicted: np.ndarray):
     """Normalized Absolute Error"""
     __mae = mae(actual, predicted)

@@ -62,11 +62,9 @@ def plot(x_c, y_c, x_t, y_t, preds, conf=None):
 
 
 class PredictionPlotterCallback(pl.Callback):
-    def __init__(self, test_batches, total_samples=4, log_to_wandb=True):
+    def __init__(self, test_batches, total_samples=4):
         self.test_data = test_batches
         self.total_samples = total_samples
-        self.log_to_wandb = log_to_wandb
-        self.imgs = None
 
     def on_validation_end(self, trainer, model):
         idxs = [random.sample(range(self.test_data[0].shape[0]), k=self.total_samples)]
@@ -90,19 +88,13 @@ class PredictionPlotterCallback(pl.Callback):
                 conf=preds_std[i],
             )
             if img is not None:
-                if self.log_to_wandb:
-                    img = wandb.Image(img)
-                imgs.append(img)
-
-        if self.log_to_wandb:
-            trainer.logger.experiment.log(
-                {
-                    "test/prediction_plots": imgs,
-                    "global_step": trainer.global_step,
-                }
-            )
-        else:
-            self.imgs = imgs
+                imgs.append(wandb.Image(img))
+        trainer.logger.experiment.log(
+            {
+                "test/prediction_plots": imgs,
+                "global_step": trainer.global_step,
+            }
+        )
 
 
 def attn_plot(attn, title, tick_spacing=None):

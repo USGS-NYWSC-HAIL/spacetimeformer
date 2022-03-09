@@ -18,7 +18,6 @@ class SpacetimeformerEmbedding(nn.Module):
         method="spatio-temporal",
         downsample_convs=1,
         start_token_len=0,
-        null_value=None,
     ):
         super().__init__()
 
@@ -50,11 +49,10 @@ class SpacetimeformerEmbedding(nn.Module):
         self._benchmark_embed_enc = None
         self._benchmark_embed_dec = None
         self.d_model = d_model
-        self.null_value = null_value
 
     def __call__(self, y, x, is_encoder=True):
         if self.method == "spatio-temporal":
-            val_time_emb, space_emb, var_idxs = self.spatio_temporal_embed(
+            val_time_emb, space_emb, var_idxs = self.parallel_spatio_temporal_embed(
                 y, x, is_encoder
             )
         else:
@@ -91,12 +89,37 @@ class SpacetimeformerEmbedding(nn.Module):
 
         return emb, torch.zeros_like(emb)
 
+    def benchmark_spatio_temporal_embed(self, y, x, is_encoder=True):
+        # use pre-made fake embedding matrix to simulate the fastest
+        # possible embedding speed and measure whether this implementation
+        # is a bottleneck. (it isn't)
+        if self._benchmark_embed_enc is None and is_encoder:
+            bs, length, d_y = y.shape
+            self._benchmark_embed_enc = torch.ones(bs, d_y * length, self.d_model).to(
+                y.device
+            )
+
+        elif self._benchmark_embed_dec is None and not is_encoder:
+            bs, length, d_y = y.shape
+            self._benchmark_embed_dec = torch.ones(bs, d_y * length, self.d_model).to(
+                y.device
+            )
+
+        node_emb = (
+            self._benchmark_embed_enc if is_encoder else self._benchmark_embed_dec
+        )
+
+        if is_encoder:
+            for conv in self.downsize_convs:
+                node_emb = conv(node_emb)
+        return node_emb, torch.zeros_like(node_emb)
+
     SPACE = True
     TIME = True
     VAL = True
     GIVEN = True
 
-    def spatio_temporal_embed(self, y, x, is_encoder=True):
+    def parallel_spatio_temporal_embed(self, y, x, is_encoder=True):
         bs, length, d_y = y.shape
 
         # val  + time embedding
@@ -105,27 +128,18 @@ class SpacetimeformerEmbedding(nn.Module):
             torch.arange(length).view(1, -1, 1).repeat(bs, 1, 1).to(x.device) / length
         )
         x = torch.cat((x, local_pos), dim=-1)
-        if not self.TIME:
-            x = torch.zeros_like(x)
-        if not self.VAL:
-            y = torch.zeros_like(y)
+
         t2v_emb = self.x_emb(x).repeat(1, d_y, 1)
         val_time_inp = torch.cat((y, t2v_emb), dim=-1)
         val_time_emb = self.y_emb(val_time_inp)
 
         # "given" embedding
-        if self.GIVEN:
-            given = torch.ones((bs, length, d_y)).long().to(x.device)  # start as T
-            if not is_encoder:
-                # mask missing values that need prediction...
-                given[:, self.start_token_len :, :] = 0
-            given = torch.cat(given.chunk(d_y, dim=-1), dim=1).squeeze(-1)
-            if self.null_value is not None:
-                # mask null values
-                null_mask = (y != self.null_value).squeeze(-1)
-                given *= null_mask
-            given_emb = self.given_emb(given)
-            val_time_emb += given_emb
+        given = torch.ones((bs, length, d_y)).long().to(x.device)
+        if not is_encoder and self.GIVEN:
+            given[:, self.start_token_len :, :] = 0
+        given = torch.cat(given.chunk(d_y, dim=-1), dim=1).squeeze(-1)
+        given_emb = self.given_emb(given)
+        val_time_emb += given_emb
 
         if is_encoder:
             for conv in self.downsize_convs:
@@ -136,8 +150,43 @@ class SpacetimeformerEmbedding(nn.Module):
         var_idx = torch.Tensor([[i for j in range(length)] for i in range(d_y)])
         var_idx = var_idx.long().to(x.device).view(-1).unsqueeze(0).repeat(bs, 1)
         var_idx_true = var_idx.clone()
-        if not self.SPACE:
-            var_idx = torch.zeros_like(var_idx)
+
         var_emb = self.var_emb(var_idx)
 
         return val_time_emb, var_emb, var_idx_true
+
+    def iter_spatio_temporal_embed(self, y, x, is_encoder=True):
+        assert len(self.downsize_convs) == 0
+
+        bs, length, d_y = y.shape
+        # split y into d_y sequences
+        ys = y.chunk(d_y, axis=-1)
+
+        # time embedding
+        if not self.TIME:
+            x = torch.zeros_like(x)
+        time_emb = self.x_emb(x)
+
+        val_time_embs = []
+        var_embs = []
+        for i, y in enumerate(ys):
+            emb_inp = torch.cat((y, time_emb), dim=-1)
+            val_time_emb = self.y_emb(emb_inp)
+
+            # spatial (variable) embedding for variable i
+            var_idx = (
+                torch.Tensor([i for _ in range(length)])
+                .long()
+                .to(y.device)
+                .repeat(bs, 1)
+            )
+            if not self.SPACE:
+                var_idx = torch.zeros_like(var_idx)
+            var_emb = self.var_emb(var_idx)
+
+            val_time_embs.append(val_time_emb)
+            var_embs.append(self.var_emb(var_idx))
+
+        val_time_embs = torch.cat(val_time_embs, dim=1)
+        var_embs = torch.cat(var_embs, dim=1)
+        return val_time_embs, var_embs
