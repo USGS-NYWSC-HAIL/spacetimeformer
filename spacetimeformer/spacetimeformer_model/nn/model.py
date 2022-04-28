@@ -237,6 +237,9 @@ class Spacetimeformer(nn.Module):
 
         return pred_distrib, (classifier_out, var_idxs), attns
 
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        return self(batch)
+
     def _global_attn_switch(
         self,
         global_attn_str: str,
