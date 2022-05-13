@@ -16,37 +16,60 @@ import spacetimeformer as stf
 class CSVTimeSeries:
     def __init__(
         self,
-        data_path: str,
-        target_cols: List[str],
+        data_path: str = None,
+        raw_df: pd.DataFrame = None,
+        target_cols: List[str] = [],
+        ignore_cols: List[str] = [],
+        time_col_name: str = "Datetime",
         read_csv_kwargs={},
-        val_split: float = 0.2,
+        val_split: float = 0.15,
         test_split: float = 0.15,
+        time_features: List[str] = [
+            "year",
+            "month",
+            "day",
+            "weekday",
+            "hour",
+            "minute",
+        ],
     ):
-        self.data_path = data_path
-        assert os.path.exists(self.data_path)
 
-        # read the file and do some datetime conversions
-        raw_df = pd.read_csv(
-            self.data_path,
-            **read_csv_kwargs,
+        assert data_path is not None or raw_df is not None
+
+        if raw_df is None:
+            self.data_path = data_path
+            assert os.path.exists(self.data_path)
+            raw_df = pd.read_csv(
+                self.data_path,
+                **read_csv_kwargs,
+            )
+
+        self.time_col_name = time_col_name
+        assert self.time_col_name in raw_df.columns
+
+        if ignore_cols:
+            if ignore_cols == "all":
+                ignore_cols = raw_df.columns.difference(target_cols).tolist()
+                ignore_cols.remove(self.time_col_name)
+            raw_df.drop(columns=ignore_cols, inplace=True)
+
+        time_df = pd.to_datetime(raw_df[self.time_col_name], format="%Y-%m-%d %H:%M")
+        df = stf.data.timefeatures.time_features(
+            time_df, raw_df, use_features=time_features
         )
-
-        time_df = pd.to_datetime(raw_df["Datetime"], format="%Y-%m-%d %H:%M")
-        df = stf.data.timefeatures.time_features(time_df, raw_df)
-
-        assert (df["Datetime"] > pd.Timestamp.min).all()
-        assert (df["Datetime"] < pd.Timestamp.max).all()
+        self.time_cols = df.columns.difference(raw_df.columns)
 
         # Train/Val/Test Split using holdout approach #
 
         def mask_intervals(mask, intervals, cond):
             for (interval_low, interval_high) in intervals:
                 if interval_low is None:
-                    interval_low = df["Datetime"].iloc[0].year
+                    interval_low = df[self.time_col_name].iloc[0].year
                 if interval_high is None:
-                    interval_high = df["Datetime"].iloc[-1].year
+                    interval_high = df[self.time_col_name].iloc[-1].year
                 mask[
-                    (df["Datetime"] >= interval_low) & (df["Datetime"] <= interval_high)
+                    (df[self.time_col_name] >= interval_low)
+                    & (df[self.time_col_name] <= interval_high)
                 ] = cond
             return mask
 
@@ -61,10 +84,16 @@ class CSVTimeSeries:
         test_interval_high = time_df.iloc[-1]
         test_intervals = [(test_interval_low, test_interval_high)]
 
+<<<<<<< HEAD
         train_mask = df["Datetime"] > pd.Timestamp.min
         val_mask = df["Datetime"] > pd.Timestamp.max
         test_mask = df["Datetime"] > pd.Timestamp.max
         # predict_mask = df["Datetime"] > pd.Timestamp.max
+=======
+        train_mask = df[self.time_col_name] > pd.Timestamp.min
+        val_mask = df[self.time_col_name] > pd.Timestamp.max
+        test_mask = df[self.time_col_name] > pd.Timestamp.max
+>>>>>>> 49b28eba44f88969160ed291d74d6fdeb592ede6
         train_mask = mask_intervals(train_mask, test_intervals, False)
         train_mask = mask_intervals(train_mask, val_intervals, False)
         val_mask = mask_intervals(val_mask, val_intervals, True)
@@ -76,14 +105,25 @@ class CSVTimeSeries:
 
         self._train_data = df[train_mask]
         self._scaler = StandardScaler()
+
         self.target_cols = target_cols
+        not_exo_cols = self.time_cols.tolist() + target_cols
+        self.exo_cols = df.columns.difference(not_exo_cols).tolist()
+        self.exo_cols.remove(self.time_col_name)
 
-        self._scaler = self._scaler.fit(self._train_data[target_cols].values)
-
+<<<<<<< HEAD
         self._train_data = self.apply_scaling(df[train_mask])
         self._val_data = self.apply_scaling(df[val_mask])
         self._test_data = self.apply_scaling(df[test_mask])
         # self._predict_data = self.apply_scaling(df[predict_mask])
+=======
+        self._scaler = self._scaler.fit(
+            self._train_data[target_cols + self.exo_cols].values
+        )
+        self._train_data = self.apply_scaling_df(df[train_mask])
+        self._val_data = self.apply_scaling_df(df[val_mask])
+        self._test_data = self.apply_scaling_df(df[test_mask])
+>>>>>>> 49b28eba44f88969160ed291d74d6fdeb592ede6
 
     def get_slice(self, split, start, stop, skip):
         assert split in ["train", "val", "test", "predict"]
@@ -96,14 +136,30 @@ class CSVTimeSeries:
         # else:
         #     return self.predict_data.iloc[start:stop:skip]
 
+<<<<<<< HEAD
     def apply_scaling(self, df):
         scaled = df.copy(deep=True)
         #scaled[self.target_cols] = self._scaler.transform(df[self.target_cols].values)
         scaled[self.target_cols] = (df[self.target_cols].values - self._scaler.mean_) / self._scaler.scale_
+=======
+    def apply_scaling(self, array):
+        dim = array.shape[-1]
+        return (array - self._scaler.mean_[:dim]) / self._scaler.scale_[:dim]
+
+    def apply_scaling_df(self, df):
+        scaled = df.copy(deep=True)
+        # scaled[self.target_cols] = self._scaler.transform(df[self.target_cols].values)
+        cols = self.target_cols + self.exo_cols
+        dtype = df[cols].values.dtype
+        scaled[cols] = (
+            df[cols].values - self._scaler.mean_.astype(dtype)
+        ) / self._scaler.scale_.astype(dtype)
+>>>>>>> 49b28eba44f88969160ed291d74d6fdeb592ede6
         return scaled
 
     def reverse_scaling_df(self, df):
         scaled = df.copy(deep=True)
+<<<<<<< HEAD
         #scaled[self.target_cols] = self._scaler.inverse_transform(df[self.target_cols].values)
         scaled[self.target_cols] = (df[self.target_cols] * self._scaler.scale_) + self._scaler.mean_
         return scaled
@@ -111,6 +167,23 @@ class CSVTimeSeries:
     def reverse_scaling(self, array):
         return (array * self._scaler.scale_) + self._scaler.mean_
         #return self._scaler.inverse_transform(array)
+=======
+        # scaled[self.target_cols] = self._scaler.inverse_transform(df[self.target_cols].values)
+        cols = self.target_cols + self.exo_cols
+        dtype = df[cols].values.dtype
+        scaled[cols] = (
+            df[cols].values * self._scaler.scale_.astype(dtype)
+        ) + self._scaler.mean_.astype(dtype)
+        return scaled
+
+    def reverse_scaling(self, array):
+        # self._scaler is fit for target_cols + exo_cols
+        # if the array dim is less than this length we start
+        # slicing from the target cols
+        dim = array.shape[-1]
+        return (array * self._scaler.scale_[:dim]) + self._scaler.mean_[:dim]
+        # return self._scaler.inverse_transform(array)
+>>>>>>> 49b28eba44f88969160ed291d74d6fdeb592ede6
 
     @property
     def train_data(self):
@@ -171,11 +244,8 @@ class CSVTorchDset(Dataset):
     def __len__(self):
         return len(self._slice_start_points)
 
-    def _torch(self, *np_arrays):
-        t = []
-        for x in np_arrays:
-            t.append(torch.from_numpy(x).float())
-        return tuple(t)
+    def _torch(self, *dfs):
+        return tuple(torch.from_numpy(x.values).float() for x in dfs)
 
     def __getitem__(self, i):
         start = self._slice_start_points[i]
@@ -185,20 +255,17 @@ class CSVTorchDset(Dataset):
             stop=start
             + self.time_resolution * (self.context_points + self.target_points),
             skip=self.time_resolution,
-        ).drop(columns=["Datetime"])
+        )
+        series_slice = series_slice.drop(columns=[self.series.time_col_name])
         ctxt_slice, trgt_slice = (
             series_slice.iloc[: self.context_points],
             series_slice.iloc[self.context_points :],
         )
-        ctxt_x = ctxt_slice[
-            ctxt_slice.columns.difference(self.series.target_cols)
-        ].values
-        ctxt_y = ctxt_slice[self.series.target_cols].values
 
-        trgt_x = trgt_slice[
-            trgt_slice.columns.difference(self.series.target_cols)
-        ].values
-        trgt_y = trgt_slice[self.series.target_cols].values
+        ctxt_x = ctxt_slice[self.series.time_cols]
+        trgt_x = trgt_slice[self.series.time_cols]
+        ctxt_y = ctxt_slice[self.series.target_cols + self.series.exo_cols]
+        trgt_y = trgt_slice[self.series.target_cols]
 
         return self._torch(ctxt_x, ctxt_y, trgt_x, trgt_y)
 
