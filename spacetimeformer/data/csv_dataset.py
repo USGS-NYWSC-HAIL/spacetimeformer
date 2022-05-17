@@ -84,16 +84,10 @@ class CSVTimeSeries:
         test_interval_high = time_df.iloc[-1]
         test_intervals = [(test_interval_low, test_interval_high)]
 
-<<<<<<< HEAD
-        train_mask = df["Datetime"] > pd.Timestamp.min
-        val_mask = df["Datetime"] > pd.Timestamp.max
-        test_mask = df["Datetime"] > pd.Timestamp.max
-        # predict_mask = df["Datetime"] > pd.Timestamp.max
-=======
         train_mask = df[self.time_col_name] > pd.Timestamp.min
         val_mask = df[self.time_col_name] > pd.Timestamp.max
         test_mask = df[self.time_col_name] > pd.Timestamp.max
->>>>>>> 49b28eba44f88969160ed291d74d6fdeb592ede6
+
         train_mask = mask_intervals(train_mask, test_intervals, False)
         train_mask = mask_intervals(train_mask, val_intervals, False)
         val_mask = mask_intervals(val_mask, val_intervals, True)
@@ -111,19 +105,12 @@ class CSVTimeSeries:
         self.exo_cols = df.columns.difference(not_exo_cols).tolist()
         self.exo_cols.remove(self.time_col_name)
 
-<<<<<<< HEAD
-        self._train_data = self.apply_scaling(df[train_mask])
-        self._val_data = self.apply_scaling(df[val_mask])
-        self._test_data = self.apply_scaling(df[test_mask])
-        # self._predict_data = self.apply_scaling(df[predict_mask])
-=======
         self._scaler = self._scaler.fit(
             self._train_data[target_cols + self.exo_cols].values
         )
         self._train_data = self.apply_scaling_df(df[train_mask])
         self._val_data = self.apply_scaling_df(df[val_mask])
         self._test_data = self.apply_scaling_df(df[test_mask])
->>>>>>> 49b28eba44f88969160ed291d74d6fdeb592ede6
 
     def get_slice(self, split, start, stop, skip):
         assert split in ["train", "val", "test", "predict"]
@@ -136,12 +123,6 @@ class CSVTimeSeries:
         # else:
         #     return self.predict_data.iloc[start:stop:skip]
 
-<<<<<<< HEAD
-    def apply_scaling(self, df):
-        scaled = df.copy(deep=True)
-        #scaled[self.target_cols] = self._scaler.transform(df[self.target_cols].values)
-        scaled[self.target_cols] = (df[self.target_cols].values - self._scaler.mean_) / self._scaler.scale_
-=======
     def apply_scaling(self, array):
         dim = array.shape[-1]
         return (array - self._scaler.mean_[:dim]) / self._scaler.scale_[:dim]
@@ -154,20 +135,10 @@ class CSVTimeSeries:
         scaled[cols] = (
             df[cols].values - self._scaler.mean_.astype(dtype)
         ) / self._scaler.scale_.astype(dtype)
->>>>>>> 49b28eba44f88969160ed291d74d6fdeb592ede6
         return scaled
 
     def reverse_scaling_df(self, df):
         scaled = df.copy(deep=True)
-<<<<<<< HEAD
-        #scaled[self.target_cols] = self._scaler.inverse_transform(df[self.target_cols].values)
-        scaled[self.target_cols] = (df[self.target_cols] * self._scaler.scale_) + self._scaler.mean_
-        return scaled
-
-    def reverse_scaling(self, array):
-        return (array * self._scaler.scale_) + self._scaler.mean_
-        #return self._scaler.inverse_transform(array)
-=======
         # scaled[self.target_cols] = self._scaler.inverse_transform(df[self.target_cols].values)
         cols = self.target_cols + self.exo_cols
         dtype = df[cols].values.dtype
@@ -183,7 +154,6 @@ class CSVTimeSeries:
         dim = array.shape[-1]
         return (array * self._scaler.scale_[:dim]) + self._scaler.mean_[:dim]
         # return self._scaler.inverse_transform(array)
->>>>>>> 49b28eba44f88969160ed291d74d6fdeb592ede6
 
     @property
     def train_data(self):
