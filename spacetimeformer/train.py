@@ -526,8 +526,8 @@ def main(args):
     callbacks = create_callbacks(config)
     test_samples = next(iter(data_module.test_dataloader()))
 
-    # with open('./config_{0}.pkl'.format(args.run_name), 'wb') as file:
-    #     pickle.dump(config, file)
+    with open('./config_{0}.pkl'.format(args.run_name), 'wb') as file:
+        pickle.dump(config, file)
 
     if config.wandb and config.plot:
         callbacks.append(
@@ -610,11 +610,11 @@ def main(args):
 
 if __name__ == "__main__":
     # CLI
-    # parser = create_parser()
-    # args = parser.parse_args()
+    parser = create_parser()
+    args = parser.parse_args()
 
-    with open('./config_spatiotemporal_toy2.pkl', 'rb') as file:
-        args = pickle.load(file)
+    # with open('./config_spatiotemporal_toy2.pkl', 'rb') as file:
+    #     args = pickle.load(file)
 
     for trial in range(args.trials):
         main(args)
