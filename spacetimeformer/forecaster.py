@@ -23,6 +23,7 @@ class Forecaster(pl.LightningModule, ABC):
         super().__init__()
         self.save_hyperparameters()
         self._inv_scaler = lambda x: x
+        self._scaler = lambda x: x
         self.l2_coeff = l2_coeff
         self.learning_rate = learning_rate
         self.time_masked_idx = None
@@ -39,6 +40,9 @@ class Forecaster(pl.LightningModule, ABC):
 
     def set_null_value(self, val: float) -> None:
         self.null_value = val
+
+    def set_scaler(self, scaler) -> None:
+        self._scaler = scaler
 
     def set_inv_scaler(self, scaler) -> None:
         self._inv_scaler = scaler
