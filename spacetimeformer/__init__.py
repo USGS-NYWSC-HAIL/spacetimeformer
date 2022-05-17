@@ -11,7 +11,7 @@ from . import mtgnn_model
 from . import spacetimeformer_model
 from . import linear_model
 
-try:
-    from . import s4_model
-except ImportError:
-    prin('no s4 model')
+# try:
+#     from . import s4_model
+# except ImportError:
+#     prin('no s4 model')
